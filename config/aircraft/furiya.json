@@ -1,0 +1,12 @@
+{
+  "id": "furiya",
+  "name": "Фурія",
+  "order": 2,
+  "limits": {
+    "temp_c": { "min": -30, "max": 50 },
+    "wind_ms": { "optimal": 8, "max": 10 },
+    "gust_ground_ms": { "max": 10 },
+    "humidity_pct": { "max": 90 },
+    "cloud_base_m": { "min": 600 }
+  }
+}

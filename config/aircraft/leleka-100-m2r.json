@@ -1,0 +1,12 @@
+{
+  "id": "leleka-100-m2r",
+  "name": "Лелека-100 M2R",
+  "order": 1,
+  "limits": {
+    "temp_c": { "min": -30, "max": 50 },
+    "wind_ms": { "optimal": 14, "max": 19 },
+    "gust_ground_ms": { "max": 12 },
+    "humidity_pct": { "max": 90 },
+    "cloud_base_m": { "min": 800 }
+  }
+}

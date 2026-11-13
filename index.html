@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FlyOn — погода для польотів</title>
+  <meta name="description" content="Прогноз погоди для польотів малих БпЛА за ТТХ літаків: вікна польотів на сьогодні, завтра і тиждень.">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1>FlyOn</h1>
+      <p class="sub">Погода для польотів · район Великого Бурлука</p>
+    </div>
+    <p id="updated" class="updated"></p>
+  </header>
+
+  <div id="stale" class="banner" hidden></div>
+
+  <section class="controls" aria-label="Параметри перегляду">
+    <div class="row">
+      <span class="label">Літак</span>
+      <div id="aircraft" class="seg"></div>
+    </div>
+    <div class="row">
+      <span class="label">Точка</span>
+      <div id="locs" class="chips"></div>
+    </div>
+    <div class="row">
+      <span class="label">Період</span>
+      <div id="tabs" class="seg"></div>
+    </div>
+  </section>
+
+  <main id="view" aria-live="polite">
+    <p class="empty">Завантаження…</p>
+  </main>
+
+  <section class="legend" aria-label="Умовні позначення">
+    <span class="chip g">Сприятливо</span>
+    <span class="chip y">З обережністю</span>
+    <span class="chip r">Неможливо</span>
+    <span class="chip u">Немає даних</span>
+  </section>
+
+  <footer>
+    <p>Допоміжний інструмент для планування польотів малої безпілотної авіації. Це прогноз погодної моделі
+      (Open-Meteo), а не офіційний авіаційний метеопрогноз. Підошва хмар і висота обмерзання є оцінками
+      (похибка близько ±100 м і більше), а точність вітру на висотах падає з відстанню у часі.
+      Рішення про виліт ухвалює оператор.</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

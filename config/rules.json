@@ -1,0 +1,28 @@
+{
+  "heights_m_agl": [100, 550, 750, 1000, 1500, 2000, 2500, 3000],
+  "window_min_hours": 4,
+  "update_every_hours": 6,
+  "forecast_days": 7,
+  "low_confidence_from_day": 4,
+  "cloud_base_tolerance_m": 100,
+  "precipitation": {
+    "rain_red_above_mm_per_h": 0.1,
+    "rain_codes": [51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82],
+    "wet_snow_codes_red": [68, 69],
+    "snow_grains_codes_yellow": [77],
+    "snow_codes_yellow": [71, 73, 75, 85, 86],
+    "hints": {
+      "77": "сніг крупою",
+      "snow": "сніг, перевірте тип візуально"
+    }
+  },
+  "fog": {
+    "visibility_red_below_m": 2000,
+    "fog_codes": [45, 48]
+  },
+  "icing": {
+    "role": "warning_only",
+    "temp_range_c": [-10, 0],
+    "humidity_min_pct": 90
+  }
+}
