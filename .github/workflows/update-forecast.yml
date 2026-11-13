@@ -1,0 +1,59 @@
+name: Оновлення прогнозу
+
+# Кожні 6 годин бере свіжий прогноз, оцінює його за ТТХ літаків і публікує сайт на GitHub Pages.
+# Час у cron вказаний за UTC (взимку Київ = UTC+2, влітку UTC+3). Хвилина 37, а не 00,
+# бо на початку години GitHub найбільш завантажений, а прогнозні моделі ще не встигають оновитися.
+
+on:
+  schedule:
+    - cron: "37 */6 * * *"
+  workflow_dispatch:        # ручний запуск: вкладка Actions -> Run workflow
+  push:
+    branches: [main, master]  # перепублікація після змін у конфігах чи коді
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Перевірка логіки та конфігів
+        run: python -m unittest discover -s tests -v
+
+      - name: Отримати прогноз (Open-Meteo)
+        run: |
+          mkdir -p _site/data
+          python scripts/fetch_forecast.py --output _site/data/forecast.json
+
+      - name: Оцінити за ТТХ літаків
+        run: python scripts/evaluate.py --forecast _site/data/forecast.json --output _site/data/assessment.json
+
+      - name: Зібрати сайт
+        run: cp index.html style.css app.js _site/
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
