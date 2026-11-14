@@ -1,0 +1,12 @@
+{
+  "id": "flyeye",
+  "name": "FlyEye",
+  "order": 3,
+  "limits": {
+    "temp_c": { "min": -10, "max": 50 },
+    "wind_ms": { "optimal": 10, "max": 18 },
+    "gust_ground_ms": { "max": 10 },
+    "humidity_pct": { "max": 98 },
+    "cloud_base_m": { "min": 1000 }
+  }
+}
