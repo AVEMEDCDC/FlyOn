@@ -109,6 +109,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .reasons li { padding: 6px 10px; border-left: 4px solid var(--u); border-radius: 4px; background: color-mix(in srgb, var(--u) 12%, transparent); }
 .reasons li.red { border-left-color: var(--r); background: color-mix(in srgb, var(--r) 12%, transparent); }
 .reasons li.yellow { border-left-color: var(--y); background: color-mix(in srgb, var(--y) 14%, transparent); }
+.reasons li.info { border-left-color: var(--g); background: color-mix(in srgb, var(--g) 12%, transparent); }
+table tr.off td { opacity: 0.4; }
 .reasons li.warn { border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 
 .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 10px 0; }

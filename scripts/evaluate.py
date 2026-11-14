@@ -2,13 +2,24 @@
 """Оцінює прогноз (data/forecast.json) за ТТХ кожного літака (config/aircraft/*.json)
 і правилами (config/rules.json). Результат: data/assessment.json.
 
-Для кожної точки й кожного літака рахує по кожній годині:
+Логіка «шару підйому»:
+  * Робоча висота літака = мінімальна висота хмар з ТТХ, округлена до найближчого рівня
+    (800 м -> 750 м, 600 м -> 550 м).
+  * Літак піднімається від землі, тож вітер, вологість і температура мають бути в межах
+    ТТХ на кожному рівні від землі до робочої висоти. Це обов'язковий шар.
+  * Рівні вище робочої висоти не обов'язкові: «стеля» - найвищий рівень, до якого все
+    в нормі на кожному рівні знизу. Політ тоді можливий у шарі від робочої висоти до стелі.
+  * Година червона, якщо в обов'язковому шарі є порушення, або порушені умови біля землі
+    (пориви, опади, туман, видимість) чи підошва хмар.
+
+Для кожної години:
   green  - усе в межах оптимуму;
-  yellow - можливо, але є причина бути уважним (вітер між оптимальним і максимальним, сніг);
-  red    - польоти неможливі (хоч одна межа перевищена, дощ, туман);
+  yellow - можливо, але є причина бути уважним (вітер між оптимальним і максимальним
+           в обов'язковому шарі, сніг);
+  red    - польоти неможливі;
   unknown - немає даних, щоб оцінити вітер, температуру чи вологість.
-Обмерзання, близька до порогу підошва хмар і низька достовірність дальніх днів
-подаються як попередження і колір не змінюють.
+Обмерзання, вузький шар, близька до порогу підошва хмар і низька достовірність дальніх
+днів подаються як попередження і колір не змінюють.
 
 Вікна: безперервні відрізки з годин green/yellow тривалістю від window_min_hours.
 Режим «Весь район»: година червона, якщо вона червона хоч в одній точці.
@@ -41,32 +52,70 @@ def at_heights(pairs, unit):
     return ", ".join(f"{h} м ({fmt(v)} {unit})" for h, v in pairs)
 
 
+def work_altitude(heights, min_cloud_base_m):
+    """Найближчий до мінімальної висоти хмар рівень (при рівній відстані береться нижчий)."""
+    return min(heights, key=lambda h: (abs(h - min_cloud_base_m), h))
+
+
+def level_problems(hour, lim, h):
+    """Список порушень ТТХ на одному рівні: [(назва, значення, одиниця)]."""
+    k = str(h)
+    problems = []
+    w = hour.get("wind_ms", {}).get(k)
+    t = hour.get("temp_c", {}).get(k)
+    r = hour.get("rh_pct", {}).get(k)
+    if w is not None and w > lim["wind_ms"]["max"]:
+        problems.append(("вітер", w, "м/с"))
+    if t is not None and (t < lim["temp_c"]["min"] or t > lim["temp_c"]["max"]):
+        problems.append(("температура", t, "°C"))
+    if r is not None and r > lim["humidity_pct"]["max"]:
+        problems.append(("вологість", r, "%"))
+    return problems
+
+
 def evaluate_hour(hour, aircraft, rules):
     lim = aircraft["limits"]
-    heights = rules["heights_m_agl"]
-    red, yellow, warnings, missing = [], [], [], []
+    heights = sorted(rules["heights_m_agl"])
+    work_alt = work_altitude(heights, lim["cloud_base_m"]["min"])
+    req_heights = [h for h in heights if h <= work_alt]  # обов'язковий шар
+    red, yellow, warnings, info, missing = [], [], [], [], []
 
-    # Температура на всіх висотах
-    temps = vals(hour.get("temp_c", {}), heights)
+    # Стеля: найвищий рівень, до якого на кожному рівні знизу все в межах ТТХ
+    stop_m, stop_problems = None, []
+    for h in heights:
+        problems = level_problems(hour, lim, h)
+        if problems:
+            stop_m, stop_problems = h, problems
+            break
+    if stop_m is None:
+        ceiling = heights[-1]
+    else:
+        below = [h for h in heights if h < stop_m]
+        ceiling = below[-1] if below else None
+
+    # Температура в обов'язковому шарі
+    temps = vals(hour.get("temp_c", {}), req_heights)
     if not temps:
         missing.append("температура")
     t_min, t_max = lim["temp_c"]["min"], lim["temp_c"]["max"]
     bad = [(h, v) for h, v in temps if v < t_min or v > t_max]
     if bad:
-        red.append(f"Температура поза межами від {fmt(t_min)} до {fmt(t_max)} °C: " + at_heights(bad, "°C"))
+        red.append(f"Температура поза межами від {fmt(t_min)} до {fmt(t_max)} °C (шар до {work_alt} м): "
+                   + at_heights(bad, "°C"))
 
-    # Вітер на всіх висотах
-    winds = vals(hour.get("wind_ms", {}), heights)
+    # Вітер в обов'язковому шарі
+    winds = vals(hour.get("wind_ms", {}), req_heights)
     if not winds:
         missing.append("вітер")
     w_opt, w_max = lim["wind_ms"]["optimal"], lim["wind_ms"]["max"]
     over_max = [(h, v) for h, v in winds if v > w_max]
     over_opt = [(h, v) for h, v in winds if w_opt < v <= w_max]
     if over_max:
-        red.append(f"Вітер вище максимуму ({fmt(w_max)} м/с): " + at_heights(over_max, "м/с"))
+        red.append(f"Вітер вище максимуму ({fmt(w_max)} м/с) у шарі підйому до {work_alt} м: "
+                   + at_heights(over_max, "м/с"))
     if over_opt:
-        yellow.append(f"Вітер вище оптимального ({fmt(w_opt)} м/с, максимум {fmt(w_max)} м/с): "
-                      + at_heights(over_opt, "м/с"))
+        yellow.append(f"Вітер вище оптимального ({fmt(w_opt)} м/с, максимум {fmt(w_max)} м/с) "
+                      f"у шарі до {work_alt} м: " + at_heights(over_opt, "м/с"))
 
     # Пориви на землі
     gust = hour.get("gust_ground_ms")
@@ -76,14 +125,14 @@ def evaluate_hour(hour, aircraft, rules):
     elif gust > g_max:
         red.append(f"Пориви на землі {fmt(gust)} м/с, максимум {fmt(g_max)} м/с")
 
-    # Вологість на всіх висотах
-    rhs = vals(hour.get("rh_pct", {}), heights)
+    # Вологість в обов'язковому шарі
+    rhs = vals(hour.get("rh_pct", {}), req_heights)
     if not rhs:
         missing.append("вологість")
     rh_max = lim["humidity_pct"]["max"]
     wet = [(h, v) for h, v in rhs if v > rh_max]
     if wet:
-        red.append(f"Вологість вище {fmt(rh_max)} %: " + at_heights(wet, "%"))
+        red.append(f"Вологість вище {fmt(rh_max)} % у шарі до {work_alt} м: " + at_heights(wet, "%"))
 
     # Підошва хмар (None означає, що хмар у шарі профілю немає)
     base = hour.get("cloud_base_m")
@@ -120,11 +169,6 @@ def evaluate_hour(hour, aircraft, rules):
     elif code in fog["fog_codes"]:
         red.append("Туман (за кодом погоди)")
 
-    # Обмерзання: лише попередження
-    icing = hour.get("icing_from_m")
-    if icing is not None:
-        warnings.append(f"Можливе обмерзання з висоти {icing} м")
-
     if red:
         status = RED
     elif missing and any(m in missing for m in ("вітер", "температура", "вологість")):
@@ -134,12 +178,36 @@ def evaluate_hour(hour, aircraft, rules):
     else:
         status = GREEN
 
-    result = {"t": hour["t"], "status": status}
+    # Шар польоту: лише коли обов'язковий шар у порядку
+    layer_ok = not (bad or over_max or wet)
+    if layer_ok and ceiling is not None and ceiling >= work_alt:
+        if ceiling == work_alt:
+            info.append(f"Політ можливий лише на висоті ~{work_alt} м")
+        else:
+            info.append(f"Політ можливий у шарі {work_alt}–{ceiling} м")
+        if stop_m is not None:
+            why = ", ".join(f"{n} {fmt(v)} {u}" for n, v, u in stop_problems)
+            info.append(f"Вище {ceiling} м не враховано: {why} на {stop_m} м")
+        if ceiling == work_alt and stop_m is not None:
+            warnings.append(f"Вузький шар: політ лише на ~{work_alt} м, вище вже не підходить")
+
+    # Обмерзання: лише попередження
+    icing = hour.get("icing_from_m")
+    if icing is not None:
+        if ceiling is not None and layer_ok and icing <= ceiling:
+            warnings.append(f"Обмерзання з висоти {icing} м, це в межах шару польоту")
+        else:
+            warnings.append(f"Можливе обмерзання з висоти {icing} м")
+
+    result = {"t": hour["t"], "status": status,
+              "work_alt_m": work_alt, "ceiling_m": ceiling, "stop_m": stop_m}
     reasons = [{"level": RED, "text": r} for r in red] + [{"level": YELLOW, "text": y} for y in yellow]
     if reasons:
         result["reasons"] = reasons
     if warnings:
         result["warnings"] = warnings
+    if info:
+        result["info"] = info
     if missing:
         result["missing"] = missing
     return result
@@ -185,7 +253,8 @@ def find_windows(hours, min_hours):
 
 def combine_area(named_hours):
     """named_hours: {назва точки: [оцінені години]}. Година району червона,
-    якщо вона червона хоч в одній точці; причини підписуються назвою точки."""
+    якщо вона червона хоч в одній точці; причини підписуються назвою точки;
+    стеля району - найнижча зі стель точок."""
     names = list(named_hours)
     by_time = {n: {h["t"]: h for h in named_hours[n]} for n in names}
     combined = []
@@ -201,17 +270,24 @@ def combine_area(named_hours):
             status = YELLOW
         else:
             status = GREEN
-        row = {"t": t, "status": status}
-        reasons, warnings = [], []
+        row = {"t": t, "status": status, "work_alt_m": base.get("work_alt_m")}
+        ceilings = [h.get("ceiling_m") for _, h in items if h is not None]
+        row["ceiling_m"] = None if (not ceilings or None in ceilings) else min(ceilings)
+        stops = [h.get("stop_m") for _, h in items if h is not None and h.get("stop_m") is not None]
+        row["stop_m"] = min(stops) if stops else None
+        reasons, warnings, info = [], [], []
         for n, h in items:
             if h is None:
                 continue
             reasons += [{"level": r["level"], "text": f"{n}: {r['text']}"} for r in h.get("reasons", [])]
             warnings += [f"{n}: {w}" for w in h.get("warnings", [])]
+            info += [f"{n}: {x}" for x in h.get("info", [])]
         if reasons:
             row["reasons"] = reasons
         if warnings:
             row["warnings"] = warnings
+        if info and status in (GREEN, YELLOW):
+            row["info"] = info
         if base.get("low_confidence"):
             row["low_confidence"] = True
         combined.append(row)
@@ -254,6 +330,7 @@ def assess(forecast, aircraft_list, rules):
 
     locations = [{"id": l["id"], "name": l["name"]} for l in forecast["locations"]]
     locations.append({"id": AREA_ID, "name": AREA_NAME})
+    heights = sorted(rules["heights_m_agl"])
     return {
         "forecast_generated_at": forecast["generated_at"],
         "evaluated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -262,7 +339,9 @@ def assess(forecast, aircraft_list, rules):
         "first_day": first_date.isoformat(),
         "window_min_hours": window_min,
         "low_confidence_from_day": low_from,
-        "aircraft": [{"id": a["id"], "name": a["name"], "limits": a["limits"]} for a in aircraft_list],
+        "aircraft": [{"id": a["id"], "name": a["name"], "limits": a["limits"],
+                      "work_alt_m": work_altitude(heights, a["limits"]["cloud_base_m"]["min"])}
+                     for a in aircraft_list],
         "locations": locations,
         "default_location": None,
         "results": results,

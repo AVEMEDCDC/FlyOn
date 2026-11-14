@@ -56,7 +56,7 @@ def make_hour(**over):
     return hour
 
 
-def with_wind(value, height=750):
+def with_wind(value, height=100):
     wind = {str(h): 5.0 for h in HEIGHTS}
     wind[str(height)] = value
     return make_hour(wind_ms=wind)
@@ -83,9 +83,15 @@ class HourStatus(unittest.TestCase):
         self.assertEqual(status(with_wind(10.0), FURIYA), ev.YELLOW)
         self.assertEqual(status(with_wind(10.1), FURIYA), ev.RED)
 
-    def test_wind_applies_at_every_height(self):
+    def test_wind_matters_up_to_work_altitude_only(self):
+        # Лелека: мін. хмари 800 -> робоча висота 750 м. Рівні до 750 включно обов'язкові.
         for h in HEIGHTS:
-            self.assertEqual(status(with_wind(20.0, h)), ev.RED, f"висота {h}")
+            expected = ev.RED if h <= 750 else ev.GREEN
+            self.assertEqual(status(with_wind(20.0, h)), expected, f"Лелека, висота {h}")
+        # Фурія: мін. хмари 600 -> робоча висота 550 м.
+        for h in HEIGHTS:
+            expected = ev.RED if h <= 550 else ev.GREEN
+            self.assertEqual(status(with_wind(11.0, h), FURIYA), expected, f"Фурія, висота {h}")
 
     def test_same_weather_differs_by_aircraft(self):
         hour = with_wind(12.0)
@@ -98,19 +104,22 @@ class HourStatus(unittest.TestCase):
         self.assertEqual(status(make_hour(gust_ground_ms=10.0), FURIYA), ev.GREEN)
         self.assertEqual(status(make_hour(gust_ground_ms=10.1), FURIYA), ev.RED)
 
-    def test_humidity_all_heights(self):
+    def test_humidity_matters_up_to_work_altitude_only(self):
         for h in HEIGHTS:
             rh = {str(x): 60 for x in HEIGHTS}
             rh[str(h)] = 91
-            self.assertEqual(status(make_hour(rh_pct=rh)), ev.RED, f"висота {h}")
+            expected = ev.RED if h <= 750 else ev.GREEN
+            self.assertEqual(status(make_hour(rh_pct=rh)), expected, f"висота {h}")
         rh = {str(x): 90 for x in HEIGHTS}
         self.assertEqual(status(make_hour(rh_pct=rh)), ev.GREEN)
 
-    def test_temperature_all_heights(self):
+    def test_temperature_matters_up_to_work_altitude_only(self):
         for bad in (-30.1, 50.1):
-            temp = {str(x): 5.0 for x in HEIGHTS}
-            temp["3000"] = bad
-            self.assertEqual(status(make_hour(temp_c=temp)), ev.RED)
+            for h in HEIGHTS:
+                temp = {str(x): 5.0 for x in HEIGHTS}
+                temp[str(h)] = bad
+                expected = ev.RED if h <= 750 else ev.GREEN
+                self.assertEqual(status(make_hour(temp_c=temp)), expected, f"{bad} на {h} м")
         temp = {str(x): -30.0 for x in HEIGHTS}
         self.assertEqual(status(make_hour(temp_c=temp)), ev.GREEN)
 
@@ -166,6 +175,79 @@ class HourStatus(unittest.TestCase):
         res = ev.evaluate_hour(make_hour(wind_ms={**{str(h): 15.0 for h in HEIGHTS}, "100": 20.0}),
                                LELEKA, RULES)
         self.assertEqual(res["status"], ev.RED)
+
+
+class FlightLayer(unittest.TestCase):
+    """Логіка «шару підйому»: літак піднімається від землі до робочої висоти."""
+
+    def test_work_altitude_rounds_to_nearest_level(self):
+        self.assertEqual(ev.work_altitude(HEIGHTS, 800), 750)
+        self.assertEqual(ev.work_altitude(HEIGHTS, 600), 550)
+        self.assertEqual(ev.work_altitude(HEIGHTS, 1000), 1000)
+        self.assertEqual(ev.work_altitude(HEIGHTS, 650), 550)   # рівна відстань: нижчий рівень
+
+    def test_user_example_good_to_1000_bad_above(self):
+        wind = {str(h): 5.0 for h in HEIGHTS}
+        for h in (1500, 2000, 2500, 3000):
+            wind[str(h)] = 25.0
+        res = ev.evaluate_hour(make_hour(wind_ms=wind), LELEKA, RULES)
+        self.assertEqual(res["status"], ev.GREEN)
+        self.assertEqual((res["work_alt_m"], res["ceiling_m"], res["stop_m"]), (750, 1000, 1500))
+        self.assertIn("750–1000", res["info"][0])
+        self.assertIn("1500", res["info"][1])
+
+    def test_bad_wind_inside_required_layer_is_red(self):
+        for bad_level in (100, 550, 750):
+            wind = {str(h): 5.0 for h in HEIGHTS}
+            wind[str(bad_level)] = 25.0
+            res = ev.evaluate_hour(make_hour(wind_ms=wind), LELEKA, RULES)
+            self.assertEqual(res["status"], ev.RED, f"поганий рівень {bad_level}")
+
+    def test_narrow_layer_is_allowed_with_warning(self):
+        wind = {str(h): 5.0 for h in HEIGHTS}
+        wind["1000"] = 25.0   # перший поганий рівень одразу над робочою висотою 750
+        res = ev.evaluate_hour(make_hour(wind_ms=wind), LELEKA, RULES)
+        self.assertEqual(res["status"], ev.GREEN)
+        self.assertEqual(res["ceiling_m"], 750)
+        self.assertTrue(any("Вузький шар" in w for w in res["warnings"]))
+
+    def test_wind_stops_ceiling_even_if_higher_levels_are_fine(self):
+        wind = {str(h): 5.0 for h in HEIGHTS}
+        wind["1500"] = 25.0   # вище 1500 вітер знову гарний, але підйом туди неможливий
+        res = ev.evaluate_hour(make_hour(wind_ms=wind), LELEKA, RULES)
+        self.assertEqual(res["ceiling_m"], 1000)
+
+    def test_humidity_above_ceiling_does_not_matter(self):
+        rh = {str(h): 60 for h in HEIGHTS}
+        rh["3000"] = 97
+        res = ev.evaluate_hour(make_hour(rh_pct=rh), LELEKA, RULES)
+        self.assertEqual(res["status"], ev.GREEN)
+        self.assertEqual(res["ceiling_m"], 2500)
+
+    def test_yellow_only_in_required_layer(self):
+        wind = {str(h): 5.0 for h in HEIGHTS}
+        wind["2000"] = 16.0   # вище оптимального, але над робочою висотою Лелеки
+        self.assertEqual(ev.evaluate_hour(make_hour(wind_ms=wind), LELEKA, RULES)["status"], ev.GREEN)
+        wind = {str(h): 5.0 for h in HEIGHTS}
+        wind["550"] = 16.0
+        self.assertEqual(ev.evaluate_hour(make_hour(wind_ms=wind), LELEKA, RULES)["status"], ev.YELLOW)
+
+    def test_ground_conditions_still_apply_to_whole_hour(self):
+        self.assertEqual(status(make_hour(gust_ground_ms=15.0)), ev.RED)
+        self.assertEqual(status(make_hour(precip_mm=0.5, weather_code=61)), ev.RED)
+        self.assertEqual(status(make_hour(visibility_m=1500)), ev.RED)
+        self.assertEqual(status(make_hour(cloud_base_m=300)), ev.RED)
+
+    def test_icing_inside_flight_layer_is_flagged(self):
+        res = ev.evaluate_hour(make_hour(icing_from_m=900), LELEKA, RULES)
+        self.assertEqual(res["status"], ev.GREEN)
+        self.assertTrue(any("в межах шару польоту" in w for w in res["warnings"]))
+
+    def test_area_ceiling_is_the_lowest(self):
+        a = [{"t": "2026-11-13T12:00", "status": G, "work_alt_m": 750, "ceiling_m": 2000, "stop_m": 2500}]
+        b = [{"t": "2026-11-13T12:00", "status": G, "work_alt_m": 750, "ceiling_m": 1000, "stop_m": 1500}]
+        out = ev.combine_area({"А": a, "Б": b})
+        self.assertEqual((out[0]["ceiling_m"], out[0]["stop_m"]), (1000, 1500))
 
 
 def timeline(pattern, start="2026-11-13T00:00"):

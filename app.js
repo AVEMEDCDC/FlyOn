@@ -154,14 +154,22 @@
     }
     if (h.warnings && h.warnings.length) return esc(h.warnings[0]);
     if (h.missing && h.missing.length) return 'Немає даних: ' + esc(h.missing.join(', '));
+    if (h.info && h.info.length) return esc(h.info[0]);
     return '';
+  }
+
+  function ceilingText(h) {
+    if (h.status !== 'green' && h.status !== 'yellow') return '—';
+    return h.ceiling_m === null || h.ceiling_m === undefined ? '—' : `${h.ceiling_m} м`;
   }
 
   function factCell(label, value, cls) {
     return `<div class="fact ${cls || ''}"><small>${esc(label)}</small>${value}</div>`;
   }
 
-  function heightsTable(raw, lim) {
+  function heightsTable(raw, lim, hr) {
+    const stop = hr && hr.stop_m !== null && hr.stop_m !== undefined ? hr.stop_m : null;
+    const work = hr ? hr.work_alt_m : null;
     const rows = F.heights_m_agl.map((ht) => {
       const k = String(ht);
       const w = raw.wind_ms[k];
@@ -172,12 +180,16 @@
       const tc = t === null ? '' : (t < lim.temp_c.min || t > lim.temp_c.max) ? 'r' : '';
       const rc = rh === null ? '' : rh > lim.humidity_pct.max ? 'r' : '';
       const arrow = d === null ? '' : `<span class="arr" style="transform:rotate(${(d + 180) % 360}deg)" aria-hidden="true">↑</span>`;
-      return `<tr><td>${ht} м</td><td class="num ${wc}">${num(w)}</td><td class="num">${d === null ? '—' : d + '°'} ${arrow}</td>`
+      const off = stop !== null && ht > stop;
+      const mark = ht === work ? ' <small>(робоча)</small>' : '';
+      return `<tr class="${off ? 'off' : ''}"><td>${ht} м${mark}</td><td class="num ${wc}">${num(w)}</td><td class="num">${d === null ? '—' : d + '°'} ${arrow}</td>`
         + `<td class="num ${tc}">${num(t)}</td><td class="num ${rc}">${rh === null ? '—' : rh}</td></tr>`;
     }).join('');
     return `<div class="tablewrap"><table><thead><tr><th>Висота</th><th class="num">Вітер м/с</th>`
       + `<th class="num">Азимут</th><th class="num">T, °C</th><th class="num">Вол., %</th></tr></thead>`
-      + `<tbody>${rows}</tbody></table></div>`;
+      + `<tbody>${rows}</tbody></table></div>`
+      + (stop !== null ? `<p class="none">Сірі рядки вище ${stop} м не враховуються: підйом туди неможливий. `
+        + `Робоча висота літака: ${work} м.</p>` : '');
   }
 
   function factsFor(m, lim) {
@@ -204,6 +216,7 @@
     const lim = aircraftInfo().limits;
     const items = [];
     for (const r of h.reasons || []) items.push(`<li class="${r.level}">${esc(r.text)}</li>`);
+    for (const x of h.info || []) items.push(`<li class="info">${esc(x)}</li>`);
     for (const w of h.warnings || []) items.push(`<li class="warn">${esc(w)}</li>`);
     if (h.missing && h.missing.length) items.push(`<li>Немає даних: ${esc(h.missing.join(', '))}</li>`);
     const reasons = items.length ? `<ul class="reasons">${items.join('')}</ul>` : '<p class="none">Обмежень немає.</p>';
@@ -224,7 +237,7 @@
         + `<tbody>${rows}</tbody></table></div><p class="none">Оберіть точку, щоб побачити профіль по висотах.</p>`;
     } else {
       const raw = rawIdx[state.loc] && rawIdx[state.loc][h.t];
-      body = raw ? factsFor(metricsFor(state.loc, h.t), lim) + heightsTable(raw, lim) : '<p class="none">Немає даних прогнозу.</p>';
+      body = raw ? factsFor(metricsFor(state.loc, h.t), lim) + heightsTable(raw, lim, h) : '<p class="none">Немає даних прогнозу.</p>';
     }
     return `<section class="card" id="detail"><div class="detail-head"><h3>${shortDate(day)}, ${h.t.slice(11, 16)}</h3>`
       + `<span class="chip ${st.cls}">${st.label}</span>${h.low_confidence ? '<span class="tag">менша достовірність</span>' : ''}</div>`
@@ -269,6 +282,7 @@
         + `<td class="num">${m ? num(m.gust) : '—'}</td>`
         + `<td class="num">${m ? (m.cloud === null ? 'немає' : m.cloud + ' м') : '—'}</td>`
         + `<td class="num">${m ? num(m.precip) : '—'}</td>`
+        + `<td class="num">${ceilingText(h)}</td>`
         + `<td class="why">${topReason(h)}</td></tr>`;
     }).join('');
 
@@ -278,7 +292,7 @@
       + detailHtml(day, hours)
       + `<section class="card"><h3>По годинах</h3><div class="tablewrap"><table class="hours"><thead><tr><th>Час</th><th>Статус</th>`
       + `<th class="num">Макс. вітер, м/с</th><th class="num">Пориви, м/с</th><th class="num">Підошва хмар</th>`
-      + `<th class="num">Опади, мм</th><th>Причина / попередження</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+      + `<th class="num">Опади, мм</th><th class="num">Політ до</th><th>Причина / попередження</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
   }
 
   function weekHtml() {
