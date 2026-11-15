@@ -6,7 +6,7 @@ name: Оновлення прогнозу
 
 on:
   schedule:
-    - cron: "37 */6 * * *"
+    - cron: "23 */3 * * *"
   workflow_dispatch:        # ручний запуск: вкладка Actions -> Run workflow
   push:
     branches: [main, master]  # перепублікація після змін у конфігах чи коді
